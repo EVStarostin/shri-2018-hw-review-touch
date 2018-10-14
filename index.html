@@ -1,0 +1,295 @@
+<html>
+    <head>
+        <meta charset = "utf-8" >
+        <meta name="viewport" content="width=device-width">
+        <script src="https://code.jquery.com/pep/0.4.3/pep.js"></script>
+
+        <style>
+            body {
+                margin: 0px;
+                margin-top: 20;
+            }
+
+            * {
+                box-sizing: border-box;
+                font-family: Verdana;
+            }
+
+            .container {
+                width: 800px;
+                max-width: 100%;
+                margin: auto;
+                background-color: silver;
+                padding: 20px;
+            }
+
+            #log {
+                width: 800px;
+                max-width: 100%;
+                margin: auto;
+            }
+
+            .image-container {
+                overflow: hidden;
+                position: relative;
+                height: 480px;
+            }
+
+            .image {
+                position: absolute;
+                top: 0;
+                left: 0;
+                height: 100%;
+
+                user-select: none;
+                -webkit-user-select: none;
+                touch-action: none;
+            }
+
+            .fake-pointer {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                pointer-events: none;
+
+                border: 1px solid rgba(200, 0, 0, 0.6);
+                background-color: rgba(200, 0, 0, 0.2);
+            }
+
+            .fake-pointer.active {
+                border: 1px solid rgba(0, 0, 200, 0.8);
+                background-color: rgba(0, 0, 200, 0.4);
+            }
+
+            .feedback {
+                display: flex;
+            }
+
+            .feedback__unit {
+                padding: 8px 0;
+                flex: 1;
+            }
+        </style>
+    </head>
+
+    <body>
+        <div>
+            <div class="container">
+                <div class="image-container">
+                    <img class="image" src="./panorama.jpg">
+                    <div class="fake-pointer"></div>
+                </div>
+
+                <div class="feedback">
+                    <div class="feedback__unit">Position:
+                        <span class="feedback__unit_left">0</span>
+                    </div>
+                    <div class="feedback__unit">Zoom:
+                        <span class="feedback__unit_zoom">100</span>%
+                    </div>
+                    <div class="feedback__unit">Brightness:
+                        <span class="feedback__unit_brightness">1</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="log">
+                <div>10.10 20:45 - 11.10 09:33 - 12.10 20:37</div>
+            </div>
+        </div>
+    </body>
+
+    <script>
+        const image = document.querySelector('.image');
+        const logNode = document.querySelector('#log');
+
+        const log = (json) => {
+            const str = JSON.stringify(json);
+            const div = document.createElement('div');
+            div.innerText = `${Date.now()} ${str}`;
+            logNode.insertBefore(div, logNode.firstChild);
+        }
+
+        // Сюда будем записывать события
+        const currentPointerEvents = {};
+
+        // Состояние нашей картинки
+        const imageState = {
+            leftMin: -(image.offsetWidth - image.parentNode.offsetWidth),
+            left: 0,
+            leftMax: 0,
+            zoomMin: 100,
+            zoom: 100,
+            zoomMax: 300,
+            brightnessMin: .2,
+            brightness: 1,
+            brightnessMax: 4,
+        };
+
+        // Описание текущего жеста
+        let gesture = null;
+
+        // Запрещает таскать картинку мышкой
+        image.addEventListener('dragstart', (event) => { event.preventDefault() });
+
+        image.addEventListener('pointerdown', (event) => {
+            currentPointerEvents[event.pointerId] = event;
+            if (!gesture) {
+                gesture = {
+                    type: 'move',
+                }
+            }
+        });
+
+        const getDistance = (e1, e2) => {
+            const {clientX: x1, clientY: y1} = e1;
+            const {clientX: x2, clientY: y2} = e2;
+            return Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
+        }
+
+        const getAngle = (e1, e2) => {
+            const {clientX: x1, clientY: y1} = e1;
+            const {clientX: x2, clientY: y2} = e2;
+            const r = Math.atan2(x2 - x1, y2 - y1);
+            return 360 - (180 + Math.round(r * 180 / Math.PI));
+        }
+
+        const feedbackNodes = {
+            left: document.querySelector('.feedback__unit_left'),
+            zoom: document.querySelector('.feedback__unit_zoom'),
+            brightness: document.querySelector('.feedback__unit_brightness'),
+        }
+
+        const setFeedback = (name, value) => {
+            feedbackNodes[name].innerText = Math.round(value * 100) / 100;
+        }
+
+        const setLeft = (dx) => {
+            const {leftMin, leftMax} = imageState;
+
+            imageState.left += dx;
+            if (imageState.left < leftMin) {
+                imageState.left = leftMin;
+            } else if (imageState.left > leftMax) {
+                imageState.left = leftMax;
+            }
+            image.style.left = `${imageState.left}px`;
+
+            setFeedback('left', -imageState.left);
+        }
+
+        image.addEventListener('pointermove', (event) => {
+            const pointersCount = Object.keys(currentPointerEvents).length;
+
+            if (pointersCount === 0 || !gesture) {
+                return;
+            }
+
+            if (pointersCount === 1 && gesture.type === 'move' && !currentPointerEvents.fake) {
+                const previousEvent = currentPointerEvents[event.pointerId];
+                const dx = event.clientX - previousEvent.clientX;
+                setLeft(dx);
+                currentPointerEvents[event.pointerId] = event;
+            } else if (pointersCount === 2) {
+
+                currentPointerEvents[event.pointerId] = event;
+                const events = Object.values(currentPointerEvents);
+                const distance = getDistance(events[0], events[1]);
+                const angle = getAngle(events[0], events[1]);
+
+                if (!gesture.startDistance) {
+                    gesture.startZoom = imageState.zoom;
+                    gesture.startDistance = distance;
+
+                    gesture.startBrightness = imageState.brightness;
+                    gesture.startAngle = angle;
+                    gesture.angleDiff = 0;
+                    gesture.type = null;
+                }
+
+                const diff =  distance - gesture.startDistance;
+                const angleDiff = angle - gesture.startAngle;
+
+                if(!gesture.type) {
+                    if (Math.abs(diff) < 32 && Math.abs(angleDiff) < 8) {
+                        log({'!': 'ignore', diff, angleDiff});
+                        return;
+                    } else if (Math.abs(diff) > 32) {
+                        log({'!': 'detected zoom', diff, angleDiff});
+                        gesture.type = 'zoom';
+                    } else {
+                        log({'!': 'detected rotate', diff, angleDiff});
+                        gesture.type = 'rotate';
+                    }
+                }
+
+                if (gesture.type === 'zoom') {
+                    const {zoomMin, zoomMax} = imageState;
+                    let zoom =  gesture.startZoom + diff;
+                    if (diff < 0) {
+                        zoom = Math.max(zoom, zoomMin);
+                    } else {
+                        zoom = Math.min(zoom, zoomMax);
+                    }
+
+                    imageState.zoom = zoom;
+                    image.style.height = `${zoom}%`;
+                    setFeedback('zoom', zoom);
+                }
+
+                if (gesture.type === 'rotate') {
+                    const {brightnessMin, brightnessMax} = imageState;
+
+                    if (Math.abs(angleDiff - gesture.angleDiff) > 300) {
+                        gesture.startBrightness = imageState.brightness;
+                        gesture.startAngle = angle;
+                        gesture.angleDiff = 0;
+                        return;
+                    }
+
+                    gesture.angleDiff = angleDiff;
+
+                    let brightness = gesture.startBrightness + angleDiff / 50;
+                    if (angleDiff < 0) {
+                        brightness = Math.max(brightness, brightnessMin);
+                    } else {
+                        brightness = Math.min(brightness, brightnessMax);
+                    }
+
+                    imageState.brightness = brightness;
+                    image.style.filter = `brightness(${brightness})`;
+                    setFeedback('brightness', brightness);
+                }
+            }
+
+        });
+
+        const onPointerUp = (event) => {
+            gesture = null;
+            delete currentPointerEvents[event.pointerId];
+        }
+
+        image.addEventListener('pointerup', onPointerUp);
+        image.addEventListener('pointercancel', onPointerUp);
+        image.addEventListener('pointerleave', onPointerUp);
+
+        const fakePointer = document.querySelector('.fake-pointer');
+        image.addEventListener('dblclick', (event) => {
+            if (currentPointerEvents['fake']) {
+                delete currentPointerEvents.fake;
+                fakePointer.style.left = 0;
+                fakePointer.style.top = 0;
+                fakePointer.classList.remove('active');
+            } else {
+                currentPointerEvents['fake'] = event;
+                width = fakePointer.offsetWidth;
+                fakePointer.classList.add('active');
+                fakePointer.style.left = imageState.left + event.offsetX - width / 2;
+                fakePointer.style.top = event.offsetY - width / 2;
+            }
+        });
+    </script>
+</html>
